@@ -14,8 +14,8 @@ class User(Base):
     password = Column(String(255), nullable=False)
 
     # relacje
-    tasks = relationship("Task", back_populates="owner", cascade="all, delete")
-    subjects = relationship("Subject", back_populates="owner", cascade="all, delete")
+    tasks = relationship("Task", back_populates="owner", cascade="all, delete-orphan")
+    subjects = relationship("Subject", back_populates="owner", cascade="all, delete-orphan")
 
 
 # ---------- PRZEDMIOTY ----------
@@ -25,10 +25,10 @@ class Subject(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(150), nullable=False)
     description = Column(Text, nullable=True)
-    owner_id = Column(Integer, ForeignKey("users.id"))
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
 
     owner = relationship("User", back_populates="subjects")
-    tasks = relationship("Task", back_populates="subject", cascade="all, delete")
+    tasks = relationship("Task", back_populates="subject", cascade="all, delete-orphan")
 
 
 # ---------- ZADANIA ----------
@@ -37,14 +37,14 @@ class Task(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String(200), nullable=False)
-    subject = Column(String(150), nullable=False)
     priority = Column(String(50), nullable=False)
     due_date = Column(Date, nullable=False)
     completed = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    owner_id = Column(Integer, ForeignKey("users.id"))
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     subject_id = Column(Integer, ForeignKey("subjects.id"), nullable=True)
 
+    # relacje
     owner = relationship("User", back_populates="tasks")
     subject = relationship("Subject", back_populates="tasks")

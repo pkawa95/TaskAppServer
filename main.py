@@ -17,10 +17,10 @@ from schemas import (
 )
 from auth import get_db, hash_password, verify_password, create_access_token, get_current_user
 
-# Tworzenie tabel
+# --- Tworzenie tabel ---
 Base.metadata.create_all(bind=engine)
 
-# Konfiguracja FastAPI
+# --- Konfiguracja FastAPI ---
 app = FastAPI(
     title="Student Task API",
     description="Rozszerzone API do zarządzania zadaniami i przedmiotami (PWA / FastAPI / JWT)",
@@ -48,6 +48,7 @@ app.add_middleware(
 # ---------- REJESTRACJA ----------
 @app.post("/register")
 def register(user: UserCreate, db: Session = Depends(get_db)):
+    # Walidacja pól
     if not all([user.first_name, user.last_name, user.email, user.password, user.confirm_password]):
         raise HTTPException(status_code=400, detail="Wszystkie pola są wymagane.")
 
@@ -57,7 +58,7 @@ def register(user: UserCreate, db: Session = Depends(get_db)):
     if len(user.password.encode("utf-8")) > 72:
         raise HTTPException(status_code=400, detail="Hasło jest zbyt długie (max 72 znaki).")
 
-    existing = db.query(User).filter(User.email == user.email).first()
+    existing = db.query(User).filter(User.email == user.email.lower()).first()
     if existing:
         raise HTTPException(status_code=400, detail="Użytkownik z tym adresem email już istnieje.")
 
@@ -77,7 +78,7 @@ def register(user: UserCreate, db: Session = Depends(get_db)):
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == form_data.username.lower()).first()
     if not user or not verify_password(form_data.password, user.password):
-        raise HTTPException(status_code=401, detail="Błędny login lub hasło")
+        raise HTTPException(status_code=401, detail="Błędny email lub hasło")
 
     token = create_access_token({"sub": user.email})
     return {"access_token": token, "token_type": "bearer"}
@@ -95,7 +96,7 @@ def whoami(current_user: User = Depends(get_current_user)):
 # ---------- WYLOGOWANIE ----------
 @app.post("/logout")
 def logout():
-    return {"message": "Wylogowano pomyślnie (usuń token po stronie klienta)"}
+    return {"message": "Wylogowano pomyślnie — usuń token po stronie klienta."}
 
 # ---------- SUBJECTS ----------
 @app.get("/subjects", response_model=list[SubjectOut])
@@ -104,6 +105,9 @@ def get_subjects(db: Session = Depends(get_db), user: User = Depends(get_current
 
 @app.post("/subjects", response_model=SubjectOut)
 def create_subject(subject: SubjectCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    if not subject.name.strip():
+        raise HTTPException(status_code=400, detail="Nazwa przedmiotu nie może być pusta.")
+
     new_subject = Subject(name=subject.name.strip(), description=subject.description, owner_id=user.id)
     db.add(new_subject)
     db.commit()

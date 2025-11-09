@@ -7,73 +7,54 @@ from sqlalchemy.orm import Session
 from database import SessionLocal
 from models import User
 
-# --- KONFIGURACJA JWT ---
-SECRET_KEY = "supersekretnyklucz"  # 🔒 możesz podmienić na bezpieczniejszy (np. z os.getenv)
+# --- JWT CONFIG ---
+SECRET_KEY = "supersekretnyklucz"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24h
 
-# --- KONFIGURACJA HASEŁ ---
+# --- PASSWORD HASHING ---
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
-
-# --- SESJA DB ---
+# --- DB SESSION ---
 def get_db():
-    """Zwraca połączenie z bazą danych"""
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
 
-
-# --- FUNKCJE HASEŁ ---
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Weryfikuje hasło użytkownika"""
+# --- HELPERS ---
+def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
 
-
-def hash_password(password: str) -> str:
-    # bcrypt obsługuje maksymalnie 72 bajty — obcinamy nadmiar
-    if len(password.encode("utf-8")) > 72:
-        password = password.encode("utf-8")[:72].decode("utf-8", errors="ignore")
+def hash_password(password):
     return pwd_context.hash(password)
 
-
-
-# --- JWT TOKENY ---
-def create_access_token(data: dict) -> str:
-    """Tworzy token JWT"""
+def create_access_token(data: dict):
     to_encode = data.copy()
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
+def get_user_by_email(db: Session, email: str):
+    return db.query(User).filter(User.email == email.lower()).first()
 
-# --- UŻYTKOWNICY ---
-def get_user_by_username(db: Session, username: str):
-    """Pobiera użytkownika po nazwie"""
-    return db.query(User).filter(User.username == username).first()
-
-
-# --- AUTORYZACJA ---
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
-    """Sprawdza token JWT i zwraca aktualnego użytkownika"""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Niepoprawny token uwierzytelniający",
         headers={"WWW-Authenticate": "Bearer"},
     )
-
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
+        email: str = payload.get("sub")
+        if email is None:
             raise credentials_exception
     except JWTError:
         raise credentials_exception
 
-    user = get_user_by_username(db, username)
+    user = get_user_by_email(db, email)
     if user is None:
         raise credentials_exception
     return user
