@@ -24,7 +24,7 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(
     title="Student Task API",
     description="Rozszerzone API do zarządzania zadaniami i przedmiotami (PWA / FastAPI / JWT)",
-    version="2.0.0",
+    version="2.0.1",
     root_path="/tasksapi"
 )
 
@@ -43,6 +43,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"]
 )
 
 # ---------- REJESTRACJA ----------
@@ -143,9 +144,22 @@ def get_tasks(db: Session = Depends(get_db), user: User = Depends(get_current_us
 
 @app.post("/tasks", response_model=TaskOut)
 def create_task(task: TaskCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    # Sprawdzenie czy podany subject_id istnieje (jeśli został przekazany)
+    if task.subject_id:
+        subject_exists = db.query(Subject).filter(
+            Subject.id == task.subject_id,
+            Subject.owner_id == user.id
+        ).first()
+        if not subject_exists:
+            raise HTTPException(status_code=400, detail="Nieprawidłowy ID przedmiotu.")
+
     new_task = Task(
-        **task.dict(),
+        title=task.title.strip(),
+        priority=task.priority,
+        due_date=task.due_date,
+        completed=False,
         owner_id=user.id,
+        subject_id=task.subject_id,
         created_at=datetime.utcnow()
     )
     db.add(new_task)
