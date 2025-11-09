@@ -8,23 +8,23 @@ from models import User, Task
 from schemas import UserCreate, TaskCreate, TaskOut, TaskUpdate
 from auth import get_db, hash_password, verify_password, create_access_token, get_current_user
 
-# Tworzymy tabele, jeśli jeszcze nie istnieją
+# Tworzenie tabel (jeśli nie istnieją)
 Base.metadata.create_all(bind=engine)
 
-# Konfiguracja FastAPI (ważne: root_path="/tasksapi" dla reverse proxy)
+# Konfiguracja FastAPI
 app = FastAPI(
     title="Mini Task API",
-    description="API do zarządzania zadaniami dla aplikacji studenckiej (PWA)",
-    version="1.0.1",
+    description="API do zarządzania zadaniami (PWA / FastAPI / JWT)",
+    version="1.0.2",
     root_path="/tasksapi"
 )
 
 # --- CORS ---
 origins = [
-    "http://127.0.0.1:5500",  # lokalne testowanie np. przez Live Server w VS Code
-    "http://localhost:5500",
-    "https://pkawa95.github.io",  # <- podmień na swoją stronę GitHub Pages
-    "https://api.pkportfolio.pl"  # dopuszczamy również testy z domeny API
+    "http://127.0.0.1:5500",       # lokalne testy (VS Code Live Server)
+    "http://localhost:5500",       # alternatywa
+    "https://pkawa95.github.io",   # Twój frontend (GitHub Pages)
+    "https://api.pkportfolio.pl",  # domena API
 ]
 
 app.add_middleware(
@@ -38,9 +38,13 @@ app.add_middleware(
 # ---------- REJESTRACJA ----------
 @app.post("/register")
 def register(user: UserCreate, db: Session = Depends(get_db)):
+    if len(user.password.encode("utf-8")) > 72:
+        raise HTTPException(status_code=400, detail="Hasło jest zbyt długie (max 72 znaki).")
+
     existing = db.query(User).filter(User.username == user.username).first()
     if existing:
         raise HTTPException(status_code=400, detail="Użytkownik już istnieje")
+
     new_user = User(username=user.username, password=hash_password(user.password))
     db.add(new_user)
     db.commit()
@@ -56,12 +60,11 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     token = create_access_token({"sub": user.username})
     return {"access_token": token, "token_type": "bearer"}
 
-# ---------- TASKS: Odczyt ----------
+# ---------- TASKS ----------
 @app.get("/tasks", response_model=list[TaskOut])
 def get_tasks(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     return db.query(Task).filter(Task.owner_id == user.id).all()
 
-# ---------- TASKS: Tworzenie ----------
 @app.post("/tasks", response_model=TaskOut)
 def create_task(task: TaskCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     new_task = Task(**task.dict(), owner_id=user.id)
@@ -70,7 +73,6 @@ def create_task(task: TaskCreate, db: Session = Depends(get_db), user: User = De
     db.refresh(new_task)
     return new_task
 
-# ---------- TASKS: Aktualizacja ----------
 @app.put("/tasks/{task_id}", response_model=TaskOut)
 def update_task(task_id: int, task: TaskUpdate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     db_task = db.query(Task).filter(Task.id == task_id, Task.owner_id == user.id).first()
@@ -82,7 +84,6 @@ def update_task(task_id: int, task: TaskUpdate, db: Session = Depends(get_db), u
     db.refresh(db_task)
     return db_task
 
-# ---------- TASKS: Usuwanie ----------
 @app.delete("/tasks/{task_id}")
 def delete_task(task_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     db_task = db.query(Task).filter(Task.id == task_id, Task.owner_id == user.id).first()
