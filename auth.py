@@ -34,16 +34,11 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 
 def hash_password(password: str) -> str:
-    if not password or not isinstance(password, str):
-        raise HTTPException(status_code=400, detail="Nieprawidłowe hasło (puste lub błędne dane).")
-
+    # bcrypt obsługuje maksymalnie 72 bajty — obcinamy nadmiar
     if len(password.encode("utf-8")) > 72:
-        raise HTTPException(status_code=400, detail="Hasło jest za długie (maksymalnie 72 znaki).")
+        password = password.encode("utf-8")[:72].decode("utf-8", errors="ignore")
+    return pwd_context.hash(password)
 
-    try:
-        return pwd_context.hash(password)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Błąd haszowania hasła: {str(e)}")
 
 
 # --- JWT TOKENY ---
