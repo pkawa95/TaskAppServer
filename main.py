@@ -2,29 +2,38 @@ from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from fastapi.middleware.cors import CORSMiddleware
+from datetime import datetime
 
 from database import Base, engine
-from models import User, Task
-from schemas import UserCreate, TaskCreate, TaskOut, TaskUpdate
+from models import User, Task, Subject
+from schemas import (
+    UserCreate,
+    TaskCreate,
+    TaskOut,
+    TaskUpdate,
+    SubjectCreate,
+    SubjectOut,
+    SubjectUpdate
+)
 from auth import get_db, hash_password, verify_password, create_access_token, get_current_user
 
-# Tworzenie tabel (jeśli nie istnieją)
+# Tworzenie tabel
 Base.metadata.create_all(bind=engine)
 
 # Konfiguracja FastAPI
 app = FastAPI(
-    title="Mini Task API",
-    description="API do zarządzania zadaniami (PWA / FastAPI / JWT)",
-    version="1.0.3",
+    title="Student Task API",
+    description="Rozszerzone API do zarządzania zadaniami i przedmiotami (PWA / FastAPI / JWT)",
+    version="2.0.0",
     root_path="/tasksapi"
 )
 
 # --- CORS ---
 origins = [
-    "https://pkawa95.github.io",          # GitHub Pages (root)
-    "https://pkawa95.github.io/TaskApp",  # Twój projekt
-    "https://api.pkportfolio.pl",         # Domena API (np. Swagger)
-    "http://127.0.0.1:5500",              # ewentualnie lokalne testy
+    "https://pkawa95.github.io",
+    "https://pkawa95.github.io/TaskApp",
+    "https://api.pkportfolio.pl",
+    "http://127.0.0.1:5500",
     "http://localhost:5500"
 ]
 
@@ -39,28 +48,89 @@ app.add_middleware(
 # ---------- REJESTRACJA ----------
 @app.post("/register")
 def register(user: UserCreate, db: Session = Depends(get_db)):
+    if not all([user.first_name, user.last_name, user.email, user.password, user.confirm_password]):
+        raise HTTPException(status_code=400, detail="Wszystkie pola są wymagane.")
+
+    if user.password != user.confirm_password:
+        raise HTTPException(status_code=400, detail="Hasła nie są identyczne.")
+
     if len(user.password.encode("utf-8")) > 72:
         raise HTTPException(status_code=400, detail="Hasło jest zbyt długie (max 72 znaki).")
 
-    existing = db.query(User).filter(User.username == user.username).first()
+    existing = db.query(User).filter(User.email == user.email).first()
     if existing:
-        raise HTTPException(status_code=400, detail="Użytkownik już istnieje")
+        raise HTTPException(status_code=400, detail="Użytkownik z tym adresem email już istnieje.")
 
-    new_user = User(username=user.username, password=hash_password(user.password))
+    new_user = User(
+        first_name=user.first_name.strip(),
+        last_name=user.last_name.strip(),
+        email=user.email.strip().lower(),
+        password=hash_password(user.password)
+    )
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
-    return {"message": "Zarejestrowano pomyślnie"}
+    return {"message": "Rejestracja zakończona sukcesem"}
 
 # ---------- LOGOWANIE ----------
 @app.post("/login")
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.username == form_data.username).first()
+    user = db.query(User).filter(User.email == form_data.username.lower()).first()
     if not user or not verify_password(form_data.password, user.password):
         raise HTTPException(status_code=401, detail="Błędny login lub hasło")
 
-    token = create_access_token({"sub": user.username})
+    token = create_access_token({"sub": user.email})
     return {"access_token": token, "token_type": "bearer"}
+
+# ---------- WHOAMI ----------
+@app.get("/whoami")
+def whoami(current_user: User = Depends(get_current_user)):
+    return {
+        "id": current_user.id,
+        "first_name": current_user.first_name,
+        "last_name": current_user.last_name,
+        "email": current_user.email
+    }
+
+# ---------- WYLOGOWANIE ----------
+@app.post("/logout")
+def logout():
+    return {"message": "Wylogowano pomyślnie (usuń token po stronie klienta)"}
+
+# ---------- SUBJECTS ----------
+@app.get("/subjects", response_model=list[SubjectOut])
+def get_subjects(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    return db.query(Subject).filter(Subject.owner_id == user.id).all()
+
+@app.post("/subjects", response_model=SubjectOut)
+def create_subject(subject: SubjectCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    new_subject = Subject(name=subject.name.strip(), description=subject.description, owner_id=user.id)
+    db.add(new_subject)
+    db.commit()
+    db.refresh(new_subject)
+    return new_subject
+
+@app.put("/subjects/{subject_id}", response_model=SubjectOut)
+def update_subject(subject_id: int, subject: SubjectUpdate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    db_subject = db.query(Subject).filter(Subject.id == subject_id, Subject.owner_id == user.id).first()
+    if not db_subject:
+        raise HTTPException(status_code=404, detail="Nie znaleziono przedmiotu")
+
+    for key, value in subject.dict(exclude_unset=True).items():
+        setattr(db_subject, key, value)
+    db.commit()
+    db.refresh(db_subject)
+    return db_subject
+
+@app.delete("/subjects/{subject_id}")
+def delete_subject(subject_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    db_subject = db.query(Subject).filter(Subject.id == subject_id, Subject.owner_id == user.id).first()
+    if not db_subject:
+        raise HTTPException(status_code=404, detail="Nie znaleziono przedmiotu")
+
+    db.delete(db_subject)
+    db.commit()
+    return {"message": "Usunięto przedmiot"}
 
 # ---------- TASKS ----------
 @app.get("/tasks", response_model=list[TaskOut])
@@ -69,7 +139,11 @@ def get_tasks(db: Session = Depends(get_db), user: User = Depends(get_current_us
 
 @app.post("/tasks", response_model=TaskOut)
 def create_task(task: TaskCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    new_task = Task(**task.dict(), owner_id=user.id)
+    new_task = Task(
+        **task.dict(),
+        owner_id=user.id,
+        created_at=datetime.utcnow()
+    )
     db.add(new_task)
     db.commit()
     db.refresh(new_task)

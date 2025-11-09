@@ -1,40 +1,61 @@
-from pydantic import BaseModel, constr
-from datetime import date
-from typing import Optional
+from pydantic import BaseModel, EmailStr
+from datetime import date, datetime
+from typing import Optional, List
 
-# ----- TASK SCHEMAS -----
+
+# ---------- SUBJECT SCHEMAS ----------
+class SubjectBase(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+class SubjectCreate(SubjectBase):
+    pass
+
+class SubjectUpdate(SubjectBase):
+    pass
+
+class SubjectOut(SubjectBase):
+    id: int
+
+    class Config:
+        orm_mode = True
+
+
+# ---------- TASK SCHEMAS ----------
 class TaskBase(BaseModel):
+    title: str
     subject: str
     priority: str
-    title: str
     due_date: date
-
 
 class TaskCreate(TaskBase):
     pass
 
-
 class TaskUpdate(TaskBase):
     completed: Optional[bool] = None
-
 
 class TaskOut(TaskBase):
     id: int
     completed: bool
+    created_at: datetime
 
     class Config:
-        from_attributes = True  # Zamiast orm_mode (FastAPI 2.x kompatybilność)
+        orm_mode = True
 
 
-# ----- USER SCHEMAS -----
+# ---------- USER SCHEMAS ----------
 class UserCreate(BaseModel):
-    username: constr(min_length=3, max_length=32)
-    password: constr(min_length=6, max_length=72)  # bcrypt ma limit 72 bajty
-
+    first_name: str
+    last_name: str
+    email: EmailStr
+    password: str
+    confirm_password: str
 
 class UserOut(BaseModel):
     id: int
-    username: str
+    first_name: str
+    last_name: str
+    email: EmailStr
 
     class Config:
-        from_attributes = True
+        orm_mode = True
