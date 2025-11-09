@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Query
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -12,6 +12,7 @@ from schemas import (
     TaskCreate, TaskOut, TaskUpdate,
     SubjectCreate, SubjectOut, SubjectUpdate
 )
+from schemas_history import TaskHistoryOut
 from auth import get_db, hash_password, verify_password, create_access_token, get_current_user
 
 # Tworzenie tabel
@@ -20,8 +21,8 @@ Base.metadata.create_all(bind=engine)
 # Konfiguracja FastAPI
 app = FastAPI(
     title="Student Task API",
-    description="Zaawansowane API do zarządzania zadaniami, przedmiotami, kolorami i historią",
-    version="2.1.0",
+    description="API do zarządzania zadaniami, przedmiotami, kolorami i historią działań",
+    version="2.2.0",
     root_path="/tasksapi"
 )
 
@@ -41,7 +42,6 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"]
 )
-
 
 # ==============================================================
 #                      FUNKCJA LOGOWANIA HISTORII
@@ -198,9 +198,7 @@ async def create_task(
     db.add(new_task)
     db.commit()
     db.refresh(new_task)
-
     log_history(db, user.id, new_task.id, "created")
-
     return new_task
 
 
@@ -209,14 +207,11 @@ def update_task(task_id: int, task: TaskUpdate, db: Session = Depends(get_db), u
     db_task = db.query(Task).filter(Task.id == task_id, Task.owner_id == user.id).first()
     if not db_task:
         raise HTTPException(status_code=404, detail="Nie znaleziono zadania")
-
     for key, value in task.dict(exclude_unset=True).items():
         setattr(db_task, key, value)
     db.commit()
     db.refresh(db_task)
-
     log_history(db, user.id, db_task.id, "updated")
-
     return db_task
 
 
@@ -225,12 +220,9 @@ def mark_task_done(task_id: int, db: Session = Depends(get_db), user: User = Dep
     db_task = db.query(Task).filter(Task.id == task_id, Task.owner_id == user.id).first()
     if not db_task:
         raise HTTPException(status_code=404, detail="Nie znaleziono zadania")
-
     db_task.completed = True
     db.commit()
-
     log_history(db, user.id, db_task.id, "completed")
-
     return {"message": "Zadanie oznaczone jako ukończone"}
 
 
@@ -241,9 +233,7 @@ def delete_task(task_id: int, db: Session = Depends(get_db), user: User = Depend
         raise HTTPException(status_code=404, detail="Nie znaleziono zadania")
     db.delete(db_task)
     db.commit()
-
     log_history(db, user.id, task_id, "deleted")
-
     return {"message": "Usunięto zadanie"}
 
 
@@ -251,22 +241,33 @@ def delete_task(task_id: int, db: Session = Depends(get_db), user: User = Depend
 #                             HISTORIA
 # ==============================================================
 
-@app.get("/history")
-def get_history(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+@app.get("/history", response_model=list[TaskHistoryOut])
+def get_history(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+    limit: int = Query(50, ge=1, le=500)
+):
     history = (
         db.query(TaskHistory)
         .filter(TaskHistory.user_id == user.id)
         .order_by(TaskHistory.timestamp.desc())
+        .limit(limit)
         .all()
     )
-    return [
-        {
-            "task_id": h.task_id,
-            "action": h.action,
-            "timestamp": h.timestamp,
-        }
-        for h in history
-    ]
+
+    results = []
+    for h in history:
+        task = db.query(Task).filter(Task.id == h.task_id).first()
+        results.append(
+            TaskHistoryOut(
+                task_id=h.task_id,
+                task_title=task.title if task else "Usunięte zadanie",
+                action=h.action,
+                timestamp=h.timestamp,
+                user_id=h.user_id
+            )
+        )
+    return results
 
 
 # ==============================================================
@@ -275,4 +276,4 @@ def get_history(db: Session = Depends(get_db), user: User = Depends(get_current_
 
 @app.get("/health")
 def health_check():
-    return {"status": "ok", "version": "2.1.0"}
+    return {"status": "ok", "version": "2.2.0"}
