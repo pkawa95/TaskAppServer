@@ -6,7 +6,7 @@ from datetime import datetime
 import base64
 
 from database import Base, engine
-from models import User, Task, Subject
+from models import User, Task, Subject, TaskHistory
 from schemas import (
     UserCreate, UserOut,
     TaskCreate, TaskOut, TaskUpdate,
@@ -21,7 +21,7 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(
     title="Student Task API",
     description="Zaawansowane API do zarządzania zadaniami, przedmiotami, kolorami i historią",
-    version="2.0.2",
+    version="2.1.0",
     root_path="/tasksapi"
 )
 
@@ -42,7 +42,26 @@ app.add_middleware(
     expose_headers=["*"]
 )
 
-# ---------- REJESTRACJA ----------
+
+# ==============================================================
+#                      FUNKCJA LOGOWANIA HISTORII
+# ==============================================================
+
+def log_history(db: Session, user_id: int, task_id: int, action: str):
+    entry = TaskHistory(
+        user_id=user_id,
+        task_id=task_id,
+        action=action,
+        timestamp=datetime.utcnow()
+    )
+    db.add(entry)
+    db.commit()
+
+
+# ==============================================================
+#                         UŻYTKOWNICY
+# ==============================================================
+
 @app.post("/register")
 def register(user: UserCreate, db: Session = Depends(get_db)):
     if not all([user.first_name, user.last_name, user.email, user.password, user.confirm_password]):
@@ -66,7 +85,7 @@ def register(user: UserCreate, db: Session = Depends(get_db)):
     db.refresh(new_user)
     return {"message": "Rejestracja zakończona sukcesem"}
 
-# ---------- LOGOWANIE ----------
+
 @app.post("/login")
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == form_data.username.lower()).first()
@@ -76,15 +95,20 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     token = create_access_token({"sub": user.email})
     return {"access_token": token, "token_type": "bearer"}
 
-# ---------- WHOAMI ----------
+
 @app.get("/whoami", response_model=UserOut)
 def whoami(current_user: User = Depends(get_current_user)):
     return current_user
 
-# ---------- SUBJECTS ----------
+
+# ==============================================================
+#                           PRZEDMIOTY
+# ==============================================================
+
 @app.get("/subjects", response_model=list[SubjectOut])
 def get_subjects(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     return db.query(Subject).filter(Subject.owner_id == user.id).all()
+
 
 @app.post("/subjects", response_model=SubjectOut)
 def create_subject(subject: SubjectCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
@@ -103,6 +127,7 @@ def create_subject(subject: SubjectCreate, db: Session = Depends(get_db), user: 
     db.refresh(new_subject)
     return new_subject
 
+
 @app.put("/subjects/{subject_id}", response_model=SubjectOut)
 def update_subject(subject_id: int, subject: SubjectUpdate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     db_subject = db.query(Subject).filter(Subject.id == subject_id, Subject.owner_id == user.id).first()
@@ -114,6 +139,7 @@ def update_subject(subject_id: int, subject: SubjectUpdate, db: Session = Depend
     db.refresh(db_subject)
     return db_subject
 
+
 @app.delete("/subjects/{subject_id}")
 def delete_subject(subject_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     db_subject = db.query(Subject).filter(Subject.id == subject_id, Subject.owner_id == user.id).first()
@@ -123,18 +149,25 @@ def delete_subject(subject_id: int, db: Session = Depends(get_db), user: User = 
     db.commit()
     return {"message": "Usunięto przedmiot"}
 
-# ---------- TASKS ----------
+
+# ==============================================================
+#                             ZADANIA
+# ==============================================================
+
 @app.get("/tasks", response_model=list[TaskOut])
 def get_tasks(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     return db.query(Task).filter(Task.owner_id == user.id).all()
+
 
 @app.get("/tasks/active", response_model=list[TaskOut])
 def get_active_tasks(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     return db.query(Task).filter(Task.owner_id == user.id, Task.completed == False).all()
 
+
 @app.get("/tasks/completed", response_model=list[TaskOut])
 def get_completed_tasks(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     return db.query(Task).filter(Task.owner_id == user.id, Task.completed == True).all()
+
 
 @app.post("/tasks", response_model=TaskOut)
 async def create_task(
@@ -165,27 +198,41 @@ async def create_task(
     db.add(new_task)
     db.commit()
     db.refresh(new_task)
+
+    log_history(db, user.id, new_task.id, "created")
+
     return new_task
+
 
 @app.put("/tasks/{task_id}", response_model=TaskOut)
 def update_task(task_id: int, task: TaskUpdate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     db_task = db.query(Task).filter(Task.id == task_id, Task.owner_id == user.id).first()
     if not db_task:
         raise HTTPException(status_code=404, detail="Nie znaleziono zadania")
+
     for key, value in task.dict(exclude_unset=True).items():
         setattr(db_task, key, value)
     db.commit()
     db.refresh(db_task)
+
+    log_history(db, user.id, db_task.id, "updated")
+
     return db_task
+
 
 @app.put("/tasks/{task_id}/done")
 def mark_task_done(task_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     db_task = db.query(Task).filter(Task.id == task_id, Task.owner_id == user.id).first()
     if not db_task:
         raise HTTPException(status_code=404, detail="Nie znaleziono zadania")
+
     db_task.completed = True
     db.commit()
+
+    log_history(db, user.id, db_task.id, "completed")
+
     return {"message": "Zadanie oznaczone jako ukończone"}
+
 
 @app.delete("/tasks/{task_id}")
 def delete_task(task_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
@@ -194,9 +241,38 @@ def delete_task(task_id: int, db: Session = Depends(get_db), user: User = Depend
         raise HTTPException(status_code=404, detail="Nie znaleziono zadania")
     db.delete(db_task)
     db.commit()
+
+    log_history(db, user.id, task_id, "deleted")
+
     return {"message": "Usunięto zadanie"}
 
-# ---------- HEALTH ----------
+
+# ==============================================================
+#                             HISTORIA
+# ==============================================================
+
+@app.get("/history")
+def get_history(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    history = (
+        db.query(TaskHistory)
+        .filter(TaskHistory.user_id == user.id)
+        .order_by(TaskHistory.timestamp.desc())
+        .all()
+    )
+    return [
+        {
+            "task_id": h.task_id,
+            "action": h.action,
+            "timestamp": h.timestamp,
+        }
+        for h in history
+    ]
+
+
+# ==============================================================
+#                              HEALTH
+# ==============================================================
+
 @app.get("/health")
 def health_check():
-    return {"status": "ok"}
+    return {"status": "ok", "version": "2.1.0"}
