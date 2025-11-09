@@ -14,17 +14,22 @@ Base.metadata.create_all(bind=engine)
 # Konfiguracja FastAPI (ważne: root_path="/tasksapi" dla reverse proxy)
 app = FastAPI(
     title="Mini Task API",
-    description="API do zarządzania zadaniami dla aplikacji studenckiej",
-    version="1.0.0",
+    description="API do zarządzania zadaniami dla aplikacji studenckiej (PWA)",
+    version="1.0.1",
     root_path="/tasksapi"
 )
 
-# Middleware CORS — pozwalamy np. na frontend z GitHub Pages
+# --- CORS ---
+origins = [
+    "http://127.0.0.1:5500",  # lokalne testowanie np. przez Live Server w VS Code
+    "http://localhost:5500",
+    "https://pkawa95.github.io",  # <- podmień na swoją stronę GitHub Pages
+    "https://api.pkportfolio.pl"  # dopuszczamy również testy z domeny API
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "*",  # Możesz tu wpisać np. "https://twoja-strona.github.io" zamiast gwiazdki
-    ],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -87,7 +92,7 @@ def delete_task(task_id: int, db: Session = Depends(get_db), user: User = Depend
     db.commit()
     return {"message": "Usunięto zadanie"}
 
-# ---------- Healthcheck ----------
+# ---------- HEALTH ----------
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
