@@ -10,6 +10,8 @@ from typing import Optional, List
 class SubjectBase(BaseModel):
     name: str
     description: Optional[str] = None
+    teacher: Optional[str] = None
+    color: Optional[str] = "#38bdf8"
 
 
 class SubjectCreate(SubjectBase):
@@ -19,6 +21,8 @@ class SubjectCreate(SubjectBase):
 class SubjectUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+    teacher: Optional[str] = None
+    color: Optional[str] = None
 
 
 class SubjectOut(SubjectBase):
@@ -37,6 +41,8 @@ class TaskBase(BaseModel):
     priority: str
     due_date: date
     subject_id: Optional[int] = None
+    description: Optional[str] = None
+    image: Optional[str] = None  # base64 lub URL obrazka
 
 
 class TaskCreate(TaskBase):
@@ -49,13 +55,14 @@ class TaskUpdate(BaseModel):
     due_date: Optional[date] = None
     completed: Optional[bool] = None
     subject_id: Optional[int] = None
+    description: Optional[str] = None
+    image: Optional[str] = None
 
 
 class TaskOut(TaskBase):
     id: int
     completed: bool
     created_at: datetime
-    subject_id: Optional[int] = None
 
     class Config:
         from_attributes = True

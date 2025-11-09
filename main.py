@@ -1,30 +1,27 @@
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form
 from fastapi.security import OAuth2PasswordRequestForm
-from sqlalchemy.orm import Session
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.orm import Session
 from datetime import datetime
+import base64
 
 from database import Base, engine
 from models import User, Task, Subject
 from schemas import (
-    UserCreate,
-    TaskCreate,
-    TaskOut,
-    TaskUpdate,
-    SubjectCreate,
-    SubjectOut,
-    SubjectUpdate
+    UserCreate, UserOut,
+    TaskCreate, TaskOut, TaskUpdate,
+    SubjectCreate, SubjectOut, SubjectUpdate
 )
 from auth import get_db, hash_password, verify_password, create_access_token, get_current_user
 
-# --- Tworzenie tabel ---
+# Tworzenie tabel
 Base.metadata.create_all(bind=engine)
 
-# --- Konfiguracja FastAPI ---
+# Konfiguracja FastAPI
 app = FastAPI(
     title="Student Task API",
-    description="Rozszerzone API do zarządzania zadaniami i przedmiotami (PWA / FastAPI / JWT)",
-    version="2.0.1",
+    description="Zaawansowane API do zarządzania zadaniami, przedmiotami, kolorami i historią",
+    version="2.0.2",
     root_path="/tasksapi"
 )
 
@@ -36,7 +33,6 @@ origins = [
     "http://127.0.0.1:5500",
     "http://localhost:5500"
 ]
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -49,16 +45,12 @@ app.add_middleware(
 # ---------- REJESTRACJA ----------
 @app.post("/register")
 def register(user: UserCreate, db: Session = Depends(get_db)):
-    # Walidacja pól
     if not all([user.first_name, user.last_name, user.email, user.password, user.confirm_password]):
         raise HTTPException(status_code=400, detail="Wszystkie pola są wymagane.")
-
     if user.password != user.confirm_password:
         raise HTTPException(status_code=400, detail="Hasła nie są identyczne.")
-
     if len(user.password.encode("utf-8")) > 72:
         raise HTTPException(status_code=400, detail="Hasło jest zbyt długie (max 72 znaki).")
-
     existing = db.query(User).filter(User.email == user.email.lower()).first()
     if existing:
         raise HTTPException(status_code=400, detail="Użytkownik z tym adresem email już istnieje.")
@@ -85,19 +77,9 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     return {"access_token": token, "token_type": "bearer"}
 
 # ---------- WHOAMI ----------
-@app.get("/whoami")
+@app.get("/whoami", response_model=UserOut)
 def whoami(current_user: User = Depends(get_current_user)):
-    return {
-        "id": current_user.id,
-        "first_name": current_user.first_name,
-        "last_name": current_user.last_name,
-        "email": current_user.email
-    }
-
-# ---------- WYLOGOWANIE ----------
-@app.post("/logout")
-def logout():
-    return {"message": "Wylogowano pomyślnie — usuń token po stronie klienta."}
+    return current_user
 
 # ---------- SUBJECTS ----------
 @app.get("/subjects", response_model=list[SubjectOut])
@@ -109,7 +91,13 @@ def create_subject(subject: SubjectCreate, db: Session = Depends(get_db), user: 
     if not subject.name.strip():
         raise HTTPException(status_code=400, detail="Nazwa przedmiotu nie może być pusta.")
 
-    new_subject = Subject(name=subject.name.strip(), description=subject.description, owner_id=user.id)
+    new_subject = Subject(
+        name=subject.name.strip(),
+        description=subject.description,
+        teacher=subject.teacher.strip() if subject.teacher else None,
+        color=subject.color or "#38bdf8",
+        owner_id=user.id
+    )
     db.add(new_subject)
     db.commit()
     db.refresh(new_subject)
@@ -120,7 +108,6 @@ def update_subject(subject_id: int, subject: SubjectUpdate, db: Session = Depend
     db_subject = db.query(Subject).filter(Subject.id == subject_id, Subject.owner_id == user.id).first()
     if not db_subject:
         raise HTTPException(status_code=404, detail="Nie znaleziono przedmiotu")
-
     for key, value in subject.dict(exclude_unset=True).items():
         setattr(db_subject, key, value)
     db.commit()
@@ -132,7 +119,6 @@ def delete_subject(subject_id: int, db: Session = Depends(get_db), user: User = 
     db_subject = db.query(Subject).filter(Subject.id == subject_id, Subject.owner_id == user.id).first()
     if not db_subject:
         raise HTTPException(status_code=404, detail="Nie znaleziono przedmiotu")
-
     db.delete(db_subject)
     db.commit()
     return {"message": "Usunięto przedmiot"}
@@ -142,24 +128,38 @@ def delete_subject(subject_id: int, db: Session = Depends(get_db), user: User = 
 def get_tasks(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     return db.query(Task).filter(Task.owner_id == user.id).all()
 
+@app.get("/tasks/active", response_model=list[TaskOut])
+def get_active_tasks(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    return db.query(Task).filter(Task.owner_id == user.id, Task.completed == False).all()
+
+@app.get("/tasks/completed", response_model=list[TaskOut])
+def get_completed_tasks(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    return db.query(Task).filter(Task.owner_id == user.id, Task.completed == True).all()
+
 @app.post("/tasks", response_model=TaskOut)
-def create_task(task: TaskCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    # Sprawdzenie czy podany subject_id istnieje (jeśli został przekazany)
-    if task.subject_id:
-        subject_exists = db.query(Subject).filter(
-            Subject.id == task.subject_id,
-            Subject.owner_id == user.id
-        ).first()
-        if not subject_exists:
-            raise HTTPException(status_code=400, detail="Nieprawidłowy ID przedmiotu.")
+async def create_task(
+    title: str = Form(...),
+    priority: str = Form(...),
+    due_date: str = Form(...),
+    subject_id: int = Form(None),
+    description: str = Form(None),
+    image: UploadFile = File(None),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    image_data = None
+    if image:
+        image_data = base64.b64encode(await image.read()).decode("utf-8")
 
     new_task = Task(
-        title=task.title.strip(),
-        priority=task.priority,
-        due_date=task.due_date,
+        title=title.strip(),
+        priority=priority,
+        due_date=due_date,
+        description=description,
+        image=image_data,
         completed=False,
         owner_id=user.id,
-        subject_id=task.subject_id,
+        subject_id=subject_id,
         created_at=datetime.utcnow()
     )
     db.add(new_task)
@@ -172,19 +172,26 @@ def update_task(task_id: int, task: TaskUpdate, db: Session = Depends(get_db), u
     db_task = db.query(Task).filter(Task.id == task_id, Task.owner_id == user.id).first()
     if not db_task:
         raise HTTPException(status_code=404, detail="Nie znaleziono zadania")
-
     for key, value in task.dict(exclude_unset=True).items():
         setattr(db_task, key, value)
     db.commit()
     db.refresh(db_task)
     return db_task
 
+@app.put("/tasks/{task_id}/done")
+def mark_task_done(task_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    db_task = db.query(Task).filter(Task.id == task_id, Task.owner_id == user.id).first()
+    if not db_task:
+        raise HTTPException(status_code=404, detail="Nie znaleziono zadania")
+    db_task.completed = True
+    db.commit()
+    return {"message": "Zadanie oznaczone jako ukończone"}
+
 @app.delete("/tasks/{task_id}")
 def delete_task(task_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     db_task = db.query(Task).filter(Task.id == task_id, Task.owner_id == user.id).first()
     if not db_task:
         raise HTTPException(status_code=404, detail="Nie znaleziono zadania")
-
     db.delete(db_task)
     db.commit()
     return {"message": "Usunięto zadanie"}

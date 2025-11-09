@@ -1,4 +1,7 @@
-from sqlalchemy import Column, Integer, String, Boolean, Date, DateTime, ForeignKey, Text, func
+from sqlalchemy import (
+    Column, Integer, String, Boolean, Date, DateTime,
+    ForeignKey, Text, func
+)
 from sqlalchemy.orm import relationship
 from database import Base
 
@@ -25,8 +28,11 @@ class Subject(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(150), nullable=False)
     description = Column(Text, nullable=True)
+    teacher = Column(String(120), nullable=True)          # prowadzący
+    color = Column(String(20), default="#38bdf8")         # kolor kapsułki / tagu
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
 
+    # relacje
     owner = relationship("User", back_populates="subjects")
     tasks = relationship("Task", back_populates="subject", cascade="all, delete-orphan")
 
@@ -37,6 +43,8 @@ class Task(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String(200), nullable=False)
+    description = Column(Text, nullable=True)             # opcjonalny opis
+    image = Column(Text, nullable=True)                   # base64 lub URL obrazka
     priority = Column(String(50), nullable=False)
     due_date = Column(Date, nullable=False)
     completed = Column(Boolean, default=False)
