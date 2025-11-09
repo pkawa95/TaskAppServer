@@ -169,6 +169,8 @@ def get_completed_tasks(db: Session = Depends(get_db), user: User = Depends(get_
     return db.query(Task).filter(Task.owner_id == user.id, Task.completed == True).all()
 
 
+from datetime import datetime, date
+
 @app.post("/tasks", response_model=TaskOut)
 async def create_task(
     title: str = Form(...),
@@ -180,26 +182,38 @@ async def create_task(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user)
 ):
-    image_data = None
-    if image:
-        image_data = base64.b64encode(await image.read()).decode("utf-8")
+    try:
+        # 🧩 Konwersja daty (ważne!)
+        due_date_obj = datetime.strptime(due_date, "%Y-%m-%d").date()
 
-    new_task = Task(
-        title=title.strip(),
-        priority=priority,
-        due_date=due_date,
-        description=description,
-        image=image_data,
-        completed=False,
-        owner_id=user.id,
-        subject_id=subject_id,
-        created_at=datetime.utcnow()
-    )
-    db.add(new_task)
-    db.commit()
-    db.refresh(new_task)
-    log_history(db, user.id, new_task.id, "created")
-    return new_task
+        image_data = None
+        if image:
+            image_data = base64.b64encode(await image.read()).decode("utf-8")
+
+        new_task = Task(
+            title=title.strip(),
+            priority=priority,
+            due_date=due_date_obj,  # ← tu przekazujemy date, nie string!
+            description=description,
+            image=image_data,
+            completed=False,
+            owner_id=user.id,
+            subject_id=subject_id,
+            created_at=datetime.utcnow()
+        )
+
+        db.add(new_task)
+        db.commit()
+        db.refresh(new_task)
+
+        log_history(db, user.id, new_task.id, "created")
+
+        return new_task
+
+    except Exception as e:
+        print("❌ Błąd przy tworzeniu zadania:", e)
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.put("/tasks/{task_id}", response_model=TaskOut)
