@@ -15,16 +15,17 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(
     title="Mini Task API",
     description="API do zarządzania zadaniami (PWA / FastAPI / JWT)",
-    version="1.0.2",
+    version="1.0.3",
     root_path="/tasksapi"
 )
 
 # --- CORS ---
 origins = [
-    "http://127.0.0.1:5500",       # lokalne testy (VS Code Live Server)
-    "http://localhost:5500",       # alternatywa
-    "https://pkawa95.github.io",   # Twój frontend (GitHub Pages)
-    "https://api.pkportfolio.pl",  # domena API
+    "https://pkawa95.github.io",          # GitHub Pages (root)
+    "https://pkawa95.github.io/TaskApp",  # Twój projekt
+    "https://api.pkportfolio.pl",         # Domena API (np. Swagger)
+    "http://127.0.0.1:5500",              # ewentualnie lokalne testy
+    "http://localhost:5500"
 ]
 
 app.add_middleware(
@@ -57,6 +58,7 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     user = db.query(User).filter(User.username == form_data.username).first()
     if not user or not verify_password(form_data.password, user.password):
         raise HTTPException(status_code=401, detail="Błędny login lub hasło")
+
     token = create_access_token({"sub": user.username})
     return {"access_token": token, "token_type": "bearer"}
 
@@ -78,6 +80,7 @@ def update_task(task_id: int, task: TaskUpdate, db: Session = Depends(get_db), u
     db_task = db.query(Task).filter(Task.id == task_id, Task.owner_id == user.id).first()
     if not db_task:
         raise HTTPException(status_code=404, detail="Nie znaleziono zadania")
+
     for key, value in task.dict(exclude_unset=True).items():
         setattr(db_task, key, value)
     db.commit()
@@ -89,6 +92,7 @@ def delete_task(task_id: int, db: Session = Depends(get_db), user: User = Depend
     db_task = db.query(Task).filter(Task.id == task_id, Task.owner_id == user.id).first()
     if not db_task:
         raise HTTPException(status_code=404, detail="Nie znaleziono zadania")
+
     db.delete(db_task)
     db.commit()
     return {"message": "Usunięto zadanie"}
